@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, Float, String, func
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import declarative_base
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from dotenv import load_dotenv
@@ -23,12 +24,11 @@ app.add_middleware(
 # ── Database ──
 _DB_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DB_DIR}/analytics.db")
-
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# ── Models ──
+# ── Tables ──
 class User(Base):
     __tablename__ = "users"
     id            = Column(Integer, primary_key=True, index=True)
@@ -65,7 +65,7 @@ def get_db():
     finally:
         db.close()
 
-# ── Schemas ──
+# ── Request Schemas ──
 class GoogleTokenRequest(BaseModel):
     id_token: str
 
@@ -165,11 +165,9 @@ def predict_with_data(data: PredictRequest, db: Session = Depends(get_db)):
     churn      = round(max(0.05, min(0.95, 1 - score / 20)), 2)
     engagement = round(min(0.95, data.clicks * 0.02 + data.pages * 0.05), 2)
     conversion = round(max(0.05, engagement - churn * 0.3), 2)
-
     db.add(Analytics(engagement=engagement, churn=churn, conversion=conversion,
                      time_spent=data.time_spent, clicks=data.clicks, pages=data.pages))
     db.commit()
-
     return {"engagement_probability": engagement, "churn_risk": churn,
             "conversion_chance": conversion, "model_used": "rule-based-engine"}
 
