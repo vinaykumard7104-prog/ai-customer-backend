@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: ai-customer-analyzer-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_CLIENT_ID
+        value: 80897882374-ors5b56g4908qug128la3pot40ea6v86.apps.googleusercontent.com
