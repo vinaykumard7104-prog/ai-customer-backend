@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, func
+from sqlalchemy import create_engine, Column, Integer, Float, String, func
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -8,12 +8,10 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 import os, random, hashlib
 
-# ─── Load .env file (reads GOOGLE_CLIENT_ID) ───
 load_dotenv()
 
 app = FastAPI(title="AI Customer Analyzer API", version="2.0")
 
-# ─── CORS — allows Android app to connect ───
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,41 +20,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----------------------------
-# DATABASE SETUP
-# ----------------------------
-
-# Auto-detects correct path on Windows (local) and Linux (Render)
+# ── Database ──
 _DB_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DB_DIR}/analytics.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
-# ----------------------------
-# DATABASE TABLES
-# ----------------------------
-
+# ── Models ──
 class User(Base):
-    """Stores users who log in via Google OAuth or Email/Password."""
     __tablename__ = "users"
-
-    id           = Column(Integer, primary_key=True, index=True)
-    google_id    = Column(String, unique=True, index=True, nullable=True)
-    email        = Column(String, unique=True, index=True, nullable=False)
-    name         = Column(String, nullable=True)
-    picture      = Column(String, nullable=True)
-    password_hash = Column(String, nullable=True)  # For email/password login
-    auth_type    = Column(String, default="google")  # "google" or "email"
-
+    id            = Column(Integer, primary_key=True, index=True)
+    google_id     = Column(String, unique=True, index=True, nullable=True)
+    email         = Column(String, unique=True, index=True, nullable=False)
+    name          = Column(String, nullable=True)
+    picture       = Column(String, nullable=True)
+    password_hash = Column(String, nullable=True)
+    auth_type     = Column(String, default="google")
 
 class Analytics(Base):
-    """Stores customer behaviour analytics predictions."""
     __tablename__ = "analytics"
-
     id         = Column(Integer, primary_key=True, index=True)
     engagement = Column(Float)
     churn      = Column(Float)
@@ -65,32 +49,15 @@ class Analytics(Base):
     clicks     = Column(Integer, nullable=True)
     pages      = Column(Integer, nullable=True)
 
-
-# Create all tables automatically
 Base.metadata.create_all(bind=engine)
 
-# ----------------------------
-# GOOGLE CLIENT ID
-# ----------------------------
-
-# Both Web Client ID and Android Client ID must be accepted
-# The Android app sends a token signed by the Web Client ID
+# ── Google Client IDs ──
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_ID_WEB = "80897882374-ors5b56g4908qug128la3pot40ea6v86.apps.googleusercontent.com"
 GOOGLE_CLIENT_ID_AND = "80897882374-4habl4ihsjj5c7qr6q427ebo66hrcgi5.apps.googleusercontent.com"
 ACCEPTED_CLIENT_IDS  = [GOOGLE_CLIENT_ID_WEB, GOOGLE_CLIENT_ID_AND, GOOGLE_CLIENT_ID]
 
-# ----------------------------
-# LOAD ML MODEL
-# ----------------------------
-
-# ML model replaced with built-in rule-based engine
-ml_model = None
-
-# ----------------------------
-# DB DEPENDENCY
-# ----------------------------
-
+# ── DB Dependency ──
 def get_db():
     db = SessionLocal()
     try:
@@ -98,10 +65,7 @@ def get_db():
     finally:
         db.close()
 
-# ----------------------------
-# REQUEST SCHEMAS
-# ----------------------------
-
+# ── Schemas ──
 class GoogleTokenRequest(BaseModel):
     id_token: str
 
@@ -114,34 +78,19 @@ class PredictRequest(BaseModel):
     clicks: int
     pages: int
 
-# ----------------------------
-# HEALTH CHECK
-# ----------------------------
-
+# ── Health ──
 @app.get("/")
 def root():
-    return {
-        "status": "AI Customer Analyzer API is running",
-        "version": "2.0",
-        "model_loaded": ml_model is not None
-    }
+    return {"status": "AI Customer Analyzer API is running", "version": "2.0"}
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "model_loaded": ml_model is not None}
+    return {"status": "healthy", "model_loaded": True}
 
-# ----------------------------
-# GOOGLE LOGIN
-# ----------------------------
-
+# ── Google Login ──
 @app.post("/auth/google")
 def google_login(request: GoogleTokenRequest, db: Session = Depends(get_db)):
-    """
-    Android sends the Google ID token after Sign-In.
-    We verify it with Google, then create or login the user.
-    """
     try:
-        # Try verifying against each accepted client ID
         user_info = None
         last_error = None
         for client_id in ACCEPTED_CLIENT_IDS:
@@ -165,187 +114,81 @@ def google_login(request: GoogleTokenRequest, db: Session = Depends(get_db)):
         name      = user_info.get("name", "")
         picture   = user_info.get("picture", "")
 
-        # Find existing user or create new one
         user = db.query(User).filter(User.google_id == google_id).first()
         is_new = False
-
         if not user:
-            user = User(
-                google_id=google_id,
-                email=email,
-                name=name,
-                picture=picture,
-                auth_type="google"
-            )
+            user = User(google_id=google_id, email=email, name=name,
+                        picture=picture, auth_type="google")
             db.add(user)
             db.commit()
             db.refresh(user)
             is_new = True
 
-        return {
-            "status": "success",
-            "user_id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "picture": user.picture,
-            "is_new_user": is_new
-        }
+        return {"status": "success", "user_id": user.id, "email": user.email,
+                "name": user.name, "picture": user.picture, "is_new_user": is_new}
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid Google token: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail=f"Invalid Google token: {str(e)}")
 
-# ----------------------------
-# EMAIL/PASSWORD LOGIN
-# ----------------------------
-
+# ── Email Login ──
 @app.post("/auth/email")
 def email_login(request: EmailLoginRequest, db: Session = Depends(get_db)):
-    """
-    Authenticate user with email and password.
-    Password is hashed with SHA-256 before comparison.
-    """
     email = request.email.lower().strip()
     password_hash = hashlib.sha256(request.password.encode()).hexdigest()
-    
-    # Find user by email
     user = db.query(User).filter(User.email == email).first()
-    
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    # Check if user registered with email (not Google)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid email or password")
     if user.auth_type != "email":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="This email is registered with Google. Please use Google Sign-In."
-        )
-    
-    # Verify password
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="This email is registered with Google. Please use Google Sign-In.")
     if user.password_hash != password_hash:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    return {
-        "status": "success",
-        "user_id": user.id,
-        "email": user.email,
-        "name": user.name,
-        "picture": user.picture or "",
-        "is_new_user": False
-    }
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid email or password")
+    return {"status": "success", "user_id": user.id, "email": user.email,
+            "name": user.name, "picture": user.picture or "", "is_new_user": False}
 
-# ----------------------------
-# GET USER PROFILE
-# ----------------------------
-
-@app.get("/user/{user_id}")
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {
-        "id": user.id,
-        "email": user.email,
-        "name": user.name,
-        "picture": user.picture
-    }
-
-# ----------------------------
-# AI PREDICTION — GET (quick random demo)
-# ----------------------------
-
+# ── Predict GET ──
 @app.get("/predict")
 def predict():
-    engagement = round(random.uniform(0.5, 0.9), 2)
-    churn      = round(random.uniform(0.1, 0.4), 2)
-    conversion = round(random.uniform(0.4, 0.8), 2)
-
     return {
-        "engagement_probability": engagement,
-        "churn_risk": churn,
-        "conversion_chance": conversion
+        "engagement_probability": round(random.uniform(0.5, 0.9), 2),
+        "churn_risk":             round(random.uniform(0.1, 0.4), 2),
+        "conversion_chance":      round(random.uniform(0.4, 0.8), 2)
     }
 
-# ----------------------------
-# AI PREDICTION — POST (uses real ML model with input data)
-# ----------------------------
-
+# ── Predict POST ──
 @app.post("/predict")
 def predict_with_data(data: PredictRequest, db: Session = Depends(get_db)):
-    """Uses the trained RandomForest model if available, else rule-based fallback."""
-
-    # Rule-based ML engine (works without sklearn/pandas)
-    score = data.time_spent * 0.1 + data.clicks * 0.05 + data.pages * 0.1
-    churn = round(max(0.05, min(0.95, 1 - score / 20)), 2)
-
+    score      = data.time_spent * 0.1 + data.clicks * 0.05 + data.pages * 0.1
+    churn      = round(max(0.05, min(0.95, 1 - score / 20)), 2)
     engagement = round(min(0.95, data.clicks * 0.02 + data.pages * 0.05), 2)
     conversion = round(max(0.05, engagement - churn * 0.3), 2)
 
-    # Save to database
-    record = Analytics(
-        engagement=engagement,
-        churn=churn,
-        conversion=conversion,
-        time_spent=data.time_spent,
-        clicks=data.clicks,
-        pages=data.pages
-    )
-    db.add(record)
+    db.add(Analytics(engagement=engagement, churn=churn, conversion=conversion,
+                     time_spent=data.time_spent, clicks=data.clicks, pages=data.pages))
     db.commit()
 
-    return {
-        "engagement_probability": engagement,
-        "churn_risk": churn,
-        "conversion_chance": conversion,
-        "model_used": "rule-based-engine"
-    }
+    return {"engagement_probability": engagement, "churn_risk": churn,
+            "conversion_chance": conversion, "model_used": "rule-based-engine"}
 
-# ----------------------------
-# ANALYTICS — store and return
-# ----------------------------
-
+# ── Analytics ──
 @app.get("/analytics")
 def analytics(db: Session = Depends(get_db)):
     engagement = round(random.uniform(0.5, 0.9), 2)
     churn      = round(random.uniform(0.1, 0.4), 2)
     conversion = round(random.uniform(0.4, 0.8), 2)
-
     db.add(Analytics(engagement=engagement, churn=churn, conversion=conversion))
     db.commit()
-
     return {"engagement": engagement, "churn": churn, "conversion": conversion}
-
-# ----------------------------
-# ANALYTICS HISTORY
-# ----------------------------
 
 @app.get("/analytics/history")
 def get_history(limit: int = 10, db: Session = Depends(get_db)):
     records = db.query(Analytics).order_by(Analytics.id.desc()).limit(limit).all()
-    return [
-        {
-            "id": r.id,
-            "engagement": r.engagement,
-            "churn": r.churn,
-            "conversion": r.conversion,
-            "time_spent": r.time_spent,
-            "clicks": r.clicks,
-            "pages": r.pages
-        }
-        for r in records
-    ]
-
-# ----------------------------
-# ANALYTICS SUMMARY
-# ----------------------------
+    return [{"id": r.id, "engagement": r.engagement, "churn": r.churn,
+             "conversion": r.conversion, "time_spent": r.time_spent,
+             "clicks": r.clicks, "pages": r.pages} for r in records]
 
 @app.get("/analytics/summary")
 def get_summary(db: Session = Depends(get_db)):
@@ -355,10 +198,7 @@ def get_summary(db: Session = Depends(get_db)):
         func.avg(Analytics.conversion).label("avg_conversion"),
         func.count(Analytics.id).label("total")
     ).first()
-
-    return {
-        "avg_engagement": round(result.avg_engagement or 0, 3),
-        "avg_churn":      round(result.avg_churn or 0, 3),
-        "avg_conversion": round(result.avg_conversion or 0, 3),
-        "total_records":  result.total
-    }
+    return {"avg_engagement": round(result.avg_engagement or 0, 3),
+            "avg_churn":      round(result.avg_churn or 0, 3),
+            "avg_conversion": round(result.avg_conversion or 0, 3),
+            "total_records":  result.total}
