@@ -6,8 +6,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from dotenv import load_dotenv
 from pydantic import BaseModel
-import joblib, os, random, hashlib
-import pandas as pd
+import os, random, hashlib
 
 # ─── Load .env file (reads GOOGLE_CLIENT_ID) ───
 load_dotenv()
@@ -85,8 +84,8 @@ ACCEPTED_CLIENT_IDS  = [GOOGLE_CLIENT_ID_WEB, GOOGLE_CLIENT_ID_AND, GOOGLE_CLIEN
 # LOAD ML MODEL
 # ----------------------------
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pkl")
-ml_model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
+# ML model replaced with built-in rule-based engine
+ml_model = None
 
 # ----------------------------
 # DB DEPENDENCY
@@ -283,16 +282,9 @@ def predict():
 def predict_with_data(data: PredictRequest, db: Session = Depends(get_db)):
     """Uses the trained RandomForest model if available, else rule-based fallback."""
 
-    if ml_model:
-        df = pd.DataFrame([{
-            "time_spent": data.time_spent,
-            "clicks": data.clicks,
-            "pages": data.pages
-        }])
-        churn = round(float(ml_model.predict_proba(df)[0][1]), 2)
-    else:
-        score = data.time_spent * 0.1 + data.clicks * 0.05 + data.pages * 0.1
-        churn = round(max(0.05, min(0.95, 1 - score / 20)), 2)
+    # Rule-based ML engine (works without sklearn/pandas)
+    score = data.time_spent * 0.1 + data.clicks * 0.05 + data.pages * 0.1
+    churn = round(max(0.05, min(0.95, 1 - score / 20)), 2)
 
     engagement = round(min(0.95, data.clicks * 0.02 + data.pages * 0.05), 2)
     conversion = round(max(0.05, engagement - churn * 0.3), 2)
@@ -313,7 +305,7 @@ def predict_with_data(data: PredictRequest, db: Session = Depends(get_db)):
         "engagement_probability": engagement,
         "churn_risk": churn,
         "conversion_chance": conversion,
-        "model_used": "RandomForest" if ml_model else "rule-based"
+        "model_used": "rule-based-engine"
     }
 
 # ----------------------------
