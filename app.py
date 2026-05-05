@@ -27,7 +27,9 @@ app.add_middleware(
 # DATABASE SETUP
 # ----------------------------
 
-DATABASE_URL = "sqlite:///./analytics.db"
+# Auto-detects correct path on Windows (local) and Linux (Render)
+_DB_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DB_DIR}/analytics.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
@@ -83,7 +85,8 @@ ACCEPTED_CLIENT_IDS  = [GOOGLE_CLIENT_ID_WEB, GOOGLE_CLIENT_ID_AND, GOOGLE_CLIEN
 # LOAD ML MODEL
 # ----------------------------
 
-ml_model = joblib.load("model.pkl") if os.path.exists("model.pkl") else None
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pkl")
+ml_model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
 
 # ----------------------------
 # DB DEPENDENCY
