@@ -51,6 +51,29 @@ class Analytics(Base):
 
 Base.metadata.create_all(bind=engine)
 
+# ── Auto-seed test users on startup ──
+def seed_users():
+    db = SessionLocal()
+    test_users = [
+        {"email": "admin@insightflow.ai", "password": "admin123", "name": "Admin User"},
+        {"email": "demo@insightflow.ai",  "password": "demo123",  "name": "Demo User"},
+        {"email": "test@gmail.com",       "password": "test123",  "name": "Test User"},
+        {"email": "user@example.com",     "password": "user123",  "name": "Example User"},
+    ]
+    for u in test_users:
+        if not db.query(User).filter(User.email == u["email"]).first():
+            db.add(User(
+                email=u["email"],
+                name=u["name"],
+                password_hash=hashlib.sha256(u["password"].encode()).hexdigest(),
+                auth_type="email",
+                picture=""
+            ))
+    db.commit()
+    db.close()
+
+seed_users()
+
 # ── Google Client IDs ──
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_ID_WEB = "80897882374-ors5b56g4908qug128la3pot40ea6v86.apps.googleusercontent.com"
@@ -72,6 +95,11 @@ class GoogleTokenRequest(BaseModel):
 class EmailLoginRequest(BaseModel):
     email: str
     password: str
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str
 
 class PredictRequest(BaseModel):
     time_spent: float
@@ -148,6 +176,25 @@ def email_login(request: EmailLoginRequest, db: Session = Depends(get_db)):
                             detail="Invalid email or password")
     return {"status": "success", "user_id": user.id, "email": user.email,
             "name": user.name, "picture": user.picture or "", "is_new_user": False}
+
+# ── Register ──
+@app.post("/auth/register")
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    email = request.email.lower().strip()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    new_user = User(
+        email=email,
+        name=request.name,
+        password_hash=hashlib.sha256(request.password.encode()).hexdigest(),
+        auth_type="email",
+        picture=""
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"status": "success", "user_id": new_user.id, "email": new_user.email,
+            "name": new_user.name, "picture": "", "is_new_user": True}
 
 # ── Predict GET ──
 @app.get("/predict")
